@@ -5594,20 +5594,22 @@
     // recordings use), instead of a fixed-colour PNG that can't follow
     // light/dark mode. Decoded buffers are cached per URL.
     var spectroWrap = card.querySelector('.spectro-wrap');
+    var aurl = card.dataset.audio;
+    var decoded = null;
     if (spectroWrap && !spectroWrap.firstChild) {
       var canvas = document.createElement('canvas');
       spectroWrap.appendChild(canvas);
-      var aurl = card.dataset.audio;
       if (_decodedCache[aurl]) {
         paintSpectrogram(canvas, _decodedCache[aurl]);
       } else {
         var actx = getSpecCtx();
         if (actx) {
-          fetch(aurl)
+          decoded = fetch(aurl)
             .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
             .then(function (b) { return actx.decodeAudioData(b); })
             .then(function (buf) {
               _decodedCache[aurl] = buf;
+              boostClip(aurl, buf);
               // Guard on document containment, not spectroWrap.contains:
               // a 30s refreshAll() poll can rebuild the atlas and detach
               // this card mid-decode. The detached wrap still "contains"
@@ -5621,9 +5623,8 @@
         }
       }
     }
-    // Start audio.
-    var audio = new Audio(card.dataset.audio);
-    boostClip(audio);
+    // Start audio (its source is set below, once the spectrogram decode settles).
+    var audio = new Audio();
     audio.addEventListener('canplay', function () {
       if (atlasCardAudioButton !== btn || atlasCardAudio !== audio) return;
       setAtlasCardButtonState(btn, 'playing');
@@ -5649,7 +5650,11 @@
       }
     });
     atlasCardAudio = audio;
-    audio.load();
+    (decoded || Promise.resolve()).catch(function () {}).then(function () {
+      if (atlasCardAudio !== audio) return;
+      audio.src = clipSrc(aurl);
+      audio.load();
+    });
   }
   function wireAtlasCardAudio(grid) {
     if (!grid || grid.__atlasCardAudioWired) return;
@@ -13643,48 +13648,37 @@
   var _decodedCache = {};
 
   // Station clips can be recorded very quietly (BirdWeather PUC clips peak around
-  // -60 dBFS), and an <audio> element can't play louder than its source. Route a
-  // clip player through a gain that lifts the clip's peak to -12 dBFS, a little
-  // under ordinary video audio. The gain is measured from the decoded clip
-  // (a browser-cache hit: recording URLs are immutable) whenever the source changes.
-  var CLIP_TARGET_PEAK = 0.25, CLIP_MAX_GAIN = 2000, _clipGains = {};
-  function clipGainFor(url) {
-    if (_clipGains[url]) return _clipGains[url];
-    var ctx = getSpecCtx();
-    _clipGains[url] = fetch(url)
-      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-      .then(function (b) { return ctx.decodeAudioData(b); })
-      .then(function (buf) {
-        var peak = 0;
-        for (var c = 0; c < buf.numberOfChannels; c++) {
-          var d = buf.getChannelData(c);
-          for (var i = 0; i < d.length; i++) if (Math.abs(d[i]) > peak) peak = Math.abs(d[i]);
-        }
-        return peak > 0 ? Math.max(1, Math.min(CLIP_MAX_GAIN, CLIP_TARGET_PEAK / peak)) : 1;
-      })
-      .catch(function () { delete _clipGains[url]; return 1; });
-    return _clipGains[url];
+  // -60 dBFS), and an <audio> element can't play louder than its source. Once a clip
+  // is decoded for its spectrogram, keep an in-memory WAV copy with its peak lifted
+  // to -12 dBFS, and play that. Playback stays a plain <audio> element: routing it
+  // through Web Audio instead put the sound behind the player's cursor (output
+  // latency the element's clock doesn't see, e.g. Bluetooth).
+  var CLIP_TARGET_PEAK = 0.25, CLIP_MAX_GAIN = 2000, _boostedClips = {};
+  function boostClip(url, buf) {
+    if (!url || !buf || _boostedClips[url]) return;
+    var ch = buf.numberOfChannels, n = buf.length, data = [], peak = 0, c, i;
+    for (c = 0; c < ch; c++) {
+      data.push(buf.getChannelData(c));
+      for (i = 0; i < n; i++) if (Math.abs(data[c][i]) > peak) peak = Math.abs(data[c][i]);
+    }
+    var gain = peak > 0 ? Math.max(1, Math.min(CLIP_MAX_GAIN, CLIP_TARGET_PEAK / peak)) : 1;
+    var wav = new DataView(new ArrayBuffer(44 + n * ch * 2));
+    function text(at, str) { for (var k = 0; k < str.length; k++) wav.setUint8(at + k, str.charCodeAt(k)); }
+    text(0, 'RIFF'); wav.setUint32(4, 36 + n * ch * 2, true); text(8, 'WAVE');
+    text(12, 'fmt '); wav.setUint32(16, 16, true); wav.setUint16(20, 1, true); wav.setUint16(22, ch, true);
+    wav.setUint32(24, buf.sampleRate, true); wav.setUint32(28, buf.sampleRate * ch * 2, true);
+    wav.setUint16(32, ch * 2, true); wav.setUint16(34, 16, true);
+    text(36, 'data'); wav.setUint32(40, n * ch * 2, true);
+    for (i = 0; i < n; i++) {
+      for (c = 0; c < ch; c++) {
+        var v = Math.max(-1, Math.min(1, data[c][i] * gain));
+        wav.setInt16(44 + (i * ch + c) * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+      }
+    }
+    _boostedClips[url] = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
   }
-  function boostClip(audio) {
-    var ctx = getSpecCtx();
-    if (!ctx || !audio || audio.__clipGain) return;
-    try {
-      var gain = ctx.createGain();
-      ctx.createMediaElementSource(audio).connect(gain);
-      gain.connect(ctx.destination);
-      audio.__clipGain = gain;
-    } catch (e) { return; }  // no Web Audio routing: plays at source level, as before
-    // Web Audio obeys the iPhone mute switch where a bare <audio> does not; keep playing (Safari 16.4+).
-    if (navigator.audioSession) navigator.audioSession.type = 'playback';
-    if (ctx.state === 'suspended') ctx.resume();
-    audio.addEventListener('loadedmetadata', function () {
-      var url = audio.currentSrc;
-      if (!url) return;
-      clipGainFor(url).then(function (g) {
-        if (audio.currentSrc === url) gain.gain.value = g;
-      });
-    });
-  }
+  // The boosted copy when it's ready, else the original (quiet) clip.
+  function clipSrc(url) { return _boostedClips[url] || url; }
 
   // Minimal in-place Cooley-Tukey radix-2 FFT (n must be a power of 2).
   // Operates on parallel real/imag Float32Array buffers. ~30 lines and
@@ -13977,6 +13971,7 @@
         .then(function (buffer) { return ctx.decodeAudioData(buffer); })
         .then(function (audioBuffer) {
           _decodedCache[cacheKey] = audioBuffer;
+          boostClip(url, audioBuffer);
           return audioBuffer;
         });
     }
@@ -14111,7 +14106,6 @@
     button.disabled = false;
     button.removeAttribute('data-error');
     var audio = new Audio();
-    boostClip(audio);
     var token = ++modalAudioToken;
     modalAudio = audio;
     audio.preload = 'metadata';
@@ -14136,7 +14130,7 @@
         return;
       }
       audio.__sourceIndex = index;
-      audio.src = audio.__sources[index];
+      audio.src = clipSrc(audio.__sources[index]);
       audio.load();
       audioClaim(stopModalAudio);
       var playPromise;
