@@ -3114,6 +3114,13 @@
   function renderCollage(items, animate) {
     collage.removeAttribute('data-frame-token');
     collage.setAttribute('data-frame-revision', ++collageRenderRevision);
+    // Keep the outgoing render's bird images so tiles showing the same picture can
+    // reuse them. A fresh lazy/async <img> paints blank for a frame or two even from
+    // cache, which made every 30 s poll flash the whole collage.
+    var reusableImgs = {};
+    collage.querySelectorAll('.gtile > img').forEach(function (el) {
+      reusableImgs[el.getAttribute('src')] = el;
+    });
     collage.innerHTML = '';
     // Drop the previous render's hit-test tiles up front so a click or hover on
     // the empty-nest state (or a collage that hasn't laid out yet) resolves to
@@ -3303,6 +3310,12 @@
       btn.style.width = r.fullW + 'px';
       btn.style.height = r.fullH + 'px';
       btn.innerHTML = '<img loading="lazy" decoding="async" src="' + img + '" alt="' + escHtml(s.com) + '">';
+      var keptImg = reusableImgs[btn.firstChild.getAttribute('src')];
+      if (keptImg) {
+        delete reusableImgs[btn.firstChild.getAttribute('src')];
+        keptImg.alt = btn.firstChild.alt;
+        btn.replaceChild(keptImg, btn.firstChild);
+      }
       if (r.labelRows) {
         addLabelInk();
         // One baseline per line of the name, each riding the line the planner
