@@ -6116,10 +6116,12 @@
   });
 
   // ---- Realtime polling ----
-  // Live station data keeps its full 30-second refresh. Saved capabilities use
+  // Live station data refreshes every 5 minutes: this site's data only changes when
+  // its BirdWeather sync runs (every 15 min), so a 30-second poll mostly re-fetched
+  // identical JSON. Returning to the tab still refreshes at once. Saved capabilities use
   // a small probe instead: the probe detects late analyzer writes, deletion,
   // and a running capture inside a folder without rebuilding every public view.
-  var POLL_MS = 30 * 1000;
+  var POLL_MS = 5 * 60 * 1000;
   var EDUCATOR_SCOPE_PROBE_SLOW_MS = 2 * 60 * 1000;
   var EDUCATOR_SCOPE_PROBE_GRACE_MS = 2 * 60 * 1000;
   var pollTimer = null;
