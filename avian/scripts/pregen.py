@@ -149,11 +149,13 @@ GENUS_STYLE_PERCHED = {
     "Aechmophorus":"waterfowl_perched","Gavia":"waterfowl_perched",
     "Pelecanus":"waterfowl_perched","Phalacrocorax":"waterfowl_perched",
     "Urile":"waterfowl_perched",
+    "Clangula":"waterfowl_perched",  # Bird Frame: Long-tailed Duck
     # Waders + herons (crane-in-reeds anchor)
     "Ardea":"wader","Egretta":"wader","Bubulcus":"wader","Butorides":"wader",
     "Nycticorax":"wader","Plegadis":"wader","Limosa":"wader","Numenius":"wader",
     "Himantopus":"wader","Recurvirostra":"wader","Charadrius":"wader",
     "Actitis":"wader","Calidris":"wader","Tringa":"wader",
+    "Gallinago":"wader","Scolopax":"wader","Arenaria":"wader",  # Bird Frame: snipe, woodcock, turnstone
     # Pale-bodied (gulls, terns, skimmer - cockatoo anchor)
     "Larus":"pale_perched","Leucophaeus":"pale_perched","Sterna":"pale_perched",
     "Thalasseus":"pale_perched","Hydroprogne":"pale_perched","Rynchops":"pale_perched",
@@ -163,7 +165,7 @@ GENUS_STYLE_PERCHED = {
 LARGE_FLIGHT_GENERA = {
     "Tyto","Bubo","Asio","Megascops","Athene","Strix","Glaucidium","Aegolius",
     "Anas","Aix","Mareca","Spatula","Branta","Anser","Cygnus","Aythya",
-    "Bucephala","Lophodytes","Mergus","Oxyura","Pelecanus","Phalacrocorax",
+    "Bucephala","Clangula","Lophodytes","Mergus","Oxyura","Pelecanus","Phalacrocorax",
     "Urile","Ardea","Egretta","Bubulcus","Butorides","Nycticorax","Plegadis",
     "Limosa","Numenius","Himantopus","Recurvirostra",
     "Buteo","Accipiter","Aquila","Circus","Falco","Cathartes","Coragyps",
@@ -177,6 +179,11 @@ def select_style_ref(sci: str, pose: int) -> str:
     # Custom overrides for hard species
     if sci == "Aeronautes saxatalis":
         return STYLE_REFS["vibrant_perched"]  # Koson kingfisher (vertical aerial-feeder posture, no swallow bias)
+    # Bird Frame: the waterfowl print shows two ducks and the model copies the
+    # second one, so these two perched ducks use a single-duck crop of Koson's
+    # mandarin ducks (the plain female only, so no crest gets copied).
+    if pose == 1 and sci in ("Clangula hyemalis", "Oxyura jamaicensis"):
+        return "10b-mandarin-duck-female-Koson.jpg"
     if pose == 2:
         return STYLE_REFS["large_flight" if genus in LARGE_FLIGHT_GENERA else "small_flight"]
     return STYLE_REFS[GENUS_STYLE_PERCHED.get(genus, "small_songbird_perched")]
