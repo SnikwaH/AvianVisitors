@@ -5623,6 +5623,7 @@
     }
     // Start audio.
     var audio = new Audio(card.dataset.audio);
+    boostClip(audio);
     audio.addEventListener('canplay', function () {
       if (atlasCardAudioButton !== btn || atlasCardAudio !== audio) return;
       setAtlasCardButtonState(btn, 'playing');
@@ -13641,6 +13642,50 @@
   // the same row doesn't re-fetch + re-decode the mp3.
   var _decodedCache = {};
 
+  // Station clips can be recorded very quietly (BirdWeather PUC clips peak around
+  // -60 dBFS), and an <audio> element can't play louder than its source. Route a
+  // clip player through a gain that lifts the clip's peak to about -1 dBFS, as
+  // BirdWeather's own player does. The gain is measured from the decoded clip
+  // (a browser-cache hit: recording URLs are immutable) whenever the source changes.
+  var CLIP_TARGET_PEAK = 0.89, CLIP_MAX_GAIN = 2000, _clipGains = {};
+  function clipGainFor(url) {
+    if (_clipGains[url]) return _clipGains[url];
+    var ctx = getSpecCtx();
+    _clipGains[url] = fetch(url)
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+      .then(function (b) { return ctx.decodeAudioData(b); })
+      .then(function (buf) {
+        var peak = 0;
+        for (var c = 0; c < buf.numberOfChannels; c++) {
+          var d = buf.getChannelData(c);
+          for (var i = 0; i < d.length; i++) if (Math.abs(d[i]) > peak) peak = Math.abs(d[i]);
+        }
+        return peak > 0 ? Math.max(1, Math.min(CLIP_MAX_GAIN, CLIP_TARGET_PEAK / peak)) : 1;
+      })
+      .catch(function () { delete _clipGains[url]; return 1; });
+    return _clipGains[url];
+  }
+  function boostClip(audio) {
+    var ctx = getSpecCtx();
+    if (!ctx || !audio || audio.__clipGain) return;
+    try {
+      var gain = ctx.createGain();
+      ctx.createMediaElementSource(audio).connect(gain);
+      gain.connect(ctx.destination);
+      audio.__clipGain = gain;
+    } catch (e) { return; }  // no Web Audio routing: plays at source level, as before
+    // Web Audio obeys the iPhone mute switch where a bare <audio> does not; keep playing (Safari 16.4+).
+    if (navigator.audioSession) navigator.audioSession.type = 'playback';
+    if (ctx.state === 'suspended') ctx.resume();
+    audio.addEventListener('loadedmetadata', function () {
+      var url = audio.currentSrc;
+      if (!url) return;
+      clipGainFor(url).then(function (g) {
+        if (audio.currentSrc === url) gain.gain.value = g;
+      });
+    });
+  }
+
   // Minimal in-place Cooley-Tukey radix-2 FFT (n must be a power of 2).
   // Operates on parallel real/imag Float32Array buffers. ~30 lines and
   // fast enough for our ~1024-sample windows of 3-second clips.
@@ -14066,6 +14111,7 @@
     button.disabled = false;
     button.removeAttribute('data-error');
     var audio = new Audio();
+    boostClip(audio);
     var token = ++modalAudioToken;
     modalAudio = audio;
     audio.preload = 'metadata';
