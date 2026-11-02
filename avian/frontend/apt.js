@@ -13644,10 +13644,10 @@
 
   // Station clips can be recorded very quietly (BirdWeather PUC clips peak around
   // -60 dBFS), and an <audio> element can't play louder than its source. Route a
-  // clip player through a gain that lifts the clip's peak to about -1 dBFS, as
-  // BirdWeather's own player does. The gain is measured from the decoded clip
+  // clip player through a gain that lifts the clip's peak to -12 dBFS, a little
+  // under ordinary video audio. The gain is measured from the decoded clip
   // (a browser-cache hit: recording URLs are immutable) whenever the source changes.
-  var CLIP_TARGET_PEAK = 0.89, CLIP_MAX_GAIN = 2000, _clipGains = {};
+  var CLIP_TARGET_PEAK = 0.25, CLIP_MAX_GAIN = 2000, _clipGains = {};
   function clipGainFor(url) {
     if (_clipGains[url]) return _clipGains[url];
     var ctx = getSpecCtx();
